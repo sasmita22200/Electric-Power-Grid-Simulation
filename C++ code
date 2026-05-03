@@ -1,0 +1,86 @@
+#include <iostream>
+#include <vector>
+#include <string>
+#include <thread>
+#include <mutex>
+#include <chrono>
+#include <memory>
+#include <iomanip>
+struct GridState {
+    double voltage;   
+    double frequency; 
+    double load_mw;  
+    std::chrono::system_clock::time_point timestamp;
+};
+class GridComponent {
+public:
+    std::string name;
+    virtual void simulate_step() = 0;
+    virtual ~GridComponent() {}
+};
+class Generator : public GridComponent {
+public:
+    double power_output; 
+    Generator(std::string n, double p) { name = n; power_output = p; }
+    void simulate_step() override {
+        power_output += (rand() % 10 - 5) * 0.1; 
+    }
+};
+class Load : public GridComponent {
+public:
+    double consumption; 
+    Load(std::string n, double c) { name = n; consumption = c; }
+    void simulate_step() override {
+        consumption += (rand() % 20 - 10) * 0.1;
+    }
+};
+class GridMonitor {
+private:
+    std::vector<GridState> logs;
+    std::mutex log_mutex;
+    bool running = true;
+public:
+    void record_state(double v, double f, double l) {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        logs.push_back({v, f, l, std::chrono::system_clock::now()});
+    }
+    void display_status() {
+        while (running) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            std::lock_guard<std::mutex> lock(log_mutex);
+            if (logs.empty()) continue;
+            const auto& latest = logs.back();
+            std::cout << "\n[GRID MONITOR] Status Update:" << std::endl;
+            std::cout << " > Voltage: " << std::fixed << std::setprecision(2) << latest.voltage << " kV" << std::endl;
+            std::cout << " > Frequency: " << latest.frequency << " Hz" << std::endl;
+            std::cout << " > Total Load: " << latest.load_mw << " MW" << std::endl;
+        }
+    }
+    void stop() { running = false; }
+};
+int main() {
+    std::vector<std::shared_ptr<GridComponent>> grid;
+    grid.push_back(std::make_shared<Generator>("HydroPlant_A", 500.0));
+    grid.push_back(std::make_shared<Load>("CityCenter", 450.0));
+    GridMonitor monitor;
+    std::thread monitor_thread(&GridMonitor::display_status, &monitor);
+    std::cout << "Starting Power Grid Simulation (Press Ctrl+C to stop)..." << std::endl;
+    try {
+        for (int i = 0; i < 20; ++i) { 
+            double total_gen = 0;
+            double total_load = 0;
+            for (auto& comp : grid) {
+                comp->simulate_step();
+                if (auto g = std::dynamic_pointer_cast<Generator>(comp)) total_gen += g->power_output;
+                if (auto l = std::dynamic_pointer_cast<Load>(comp)) total_load += l->consumption;
+            }
+            double current_freq = 60.0 + (total_gen - total_load) * 0.01;
+            double current_volt = 230.0 + (rand() % 5 - 2);
+            monitor.record_state(current_volt, current_freq, total_load);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    } catch (...) {}
+    monitor.stop();
+    if (monitor_thread.joinable()) monitor_thread.join();    
+    return 0;
+}
